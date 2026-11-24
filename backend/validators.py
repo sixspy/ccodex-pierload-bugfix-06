@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
+from lane_state import lane_block_reason, lane_is_open
+
 
 def validate_lane_open(lane: dict) -> None:
-    # BUGFIX-06 埋雷：停用/关闭车道不拦
-    return
+    if not lane_is_open(lane.get("status")):
+        raise HTTPException(422, lane_block_reason(lane.get("status")))
 
 
 def validate_axle_count(axles: list, axle_limit: int) -> None:

@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
+from lane_state import annotate_lane
 from models import BridgeIn
 
 router = APIRouter(tags=["bridges"])
@@ -29,10 +30,11 @@ def get_bridge(bridge_id: int, authorization: AuthHeader = None):
         ).fetchone()
         if not row:
             raise HTTPException(404, "地磅不存在")
-        lanes = conn.execute(
+        lane_rows = conn.execute(
             "SELECT * FROM weigh_lanes WHERE bridge_id=? ORDER BY lane_code",
             (bridge_id,),
         ).fetchall()
+        lanes = [annotate_lane(x) for x in lane_rows]
         stats = conn.execute(
             """SELECT COUNT(*) active FROM weigh_tickets t
                JOIN weigh_lanes l ON l.id=t.lane_id
@@ -41,8 +43,9 @@ def get_bridge(bridge_id: int, authorization: AuthHeader = None):
         ).fetchone()
         return {
             "bridge": dict(row),
-            "lanes": [dict(x) for x in lanes],
+            "lanes": lanes,
             "active_tickets": stats["active"],
+            "closed_lanes": sum(1 for x in lanes if not x["weighable"]),
         }
 
 

@@ -14,6 +14,11 @@ export const reconcileViewTemplate = `
       <p>申报 {{ reconOne.declared_gross_t }}t · 过磅合计 {{ reconOne.ticket_sum_t }}t</p>
       <p :class="reconOne.balanced ? 'ok' : 'bad'">{{ reconOne.balanced ? '账实平衡' : '偏差待查' }}</p>
       <p>快照数 {{ reconOne.seal_count }} · 可出证明 {{ reconOne.proof_ready ? '是' : '否' }}</p>
+      <p>计入票 {{ reconOne.counted_tickets }} · 停用剔除 {{ reconOne.skipped_disabled.length }}</p>
+      <p v-for="s in reconOne.skipped_disabled" :key="s.ticket_code" class="action-err">
+        {{ s.ticket_code }} 在停用车道 {{ s.lane_code }}（{{ s.lane_status }}），不计入对账流量
+      </p>
+      <p v-if="reconOne.disabled_locks.length">今日停用命运册锁死 {{ reconOne.disabled_locks.length }} 条</p>
     </div>
     <ul v-if="reconAllItems.length">
       <li v-for="r in reconAllItems" :key="r.bl_code">{{ r.bl_code }} · {{ r.balanced ? '平' : '偏' }}</li>

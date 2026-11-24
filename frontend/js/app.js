@@ -40,6 +40,7 @@ createApp({
     const ticketDetail = ref(null);
     const reconOne = ref(null);
     const reconAllItems = ref([]);
+    const disabledLedger = ref([]);
     const proofOne = ref(null);
     const reconCode = ref("BL-2026-0101");
     const proofCode = ref("WT-LN-N-01-IN-001");
@@ -50,7 +51,7 @@ createApp({
     });
     const laneForm = ref({
       lane_code: "LN-NEW-IN", bridge_id: 1, direction: "进闸",
-      overload_threshold_t: 40, side_lane_ref: "旁路丁",
+      overload_threshold_t: 40, side_lane_ref: "旁路丁", status: "开放",
     });
     const ticketForm = ref({
       lane_id: 1, bl_ref: "BL-2026-0101", vehicle_plate: "沪A·试0001",
@@ -84,6 +85,14 @@ createApp({
     );
     const sealableTickets = computed(() =>
       tickets.value.filter((t) => ["已裁定","已放行"].includes(t.status))
+    );
+    const selectedLane = computed(() =>
+      lanes.value.find((l) => l.id === ticketForm.value.lane_id)
+    );
+    const selectedLaneBlocked = computed(() =>
+      selectedLane.value && !selectedLane.value.weighable
+        ? (selectedLane.value.blocked_reason || "停用禁磅")
+        : ""
     );
 
     function fmtT(n) {
@@ -126,10 +135,10 @@ createApp({
       if (!token.value) return;
       clearFlash();
       try {
-        const [d, br, ln, tk, ov, gr, sl, bl, lg, cj, cj2] = await Promise.all([
+        const [d, br, ln, tk, ov, gr, sl, bl, lg, cj, cj2, dl] = await Promise.all([
           api.dashboard(), api.bridges(), api.lanes(), api.tickets(), api.overloads(),
           api.gateReleases(), api.seals(), api.blList(), api.lineage(),
-          api.customsJobs(), api.craneJobs(),
+          api.customsJobs(), api.craneJobs(), api.disabledLedger(),
         ]);
         dash.value = d || {};
         bridges.value = br.items || [];
@@ -142,6 +151,7 @@ createApp({
         lineageEdges.value = lg.items || [];
         customsJobs.value = cj.items || [];
         craneJobs.value = cj2.items || [];
+        disabledLedger.value = dl.items || [];
         if (bridges.value.length) {
           laneForm.value.bridge_id = laneForm.value.bridge_id || bridges.value[0].id;
         }
@@ -173,6 +183,10 @@ createApp({
     }
     async function createTicket() {
       clearFlash();
+      if (selectedLaneBlocked.value) {
+        flashErr(new Error(selectedLaneBlocked.value));
+        return;
+      }
       try {
         const axles = JSON.parse(ticketForm.value.axles_json || "[]");
         const payload = {
@@ -263,10 +277,11 @@ createApp({
       token, user, username, password, err, actionErr, actionOk, tab, nav,
       dash, bridges, lanes, tickets, overloads, gateReleases, seals, blList,
       lineageEdges, customsJobs, craneJobs, bridgeDetail, ticketDetail,
-      reconOne, reconAllItems, proofOne, reconCode, proofCode,
+      reconOne, reconAllItems, disabledLedger, proofOne, reconCode, proofCode,
       bridgeForm, laneForm, ticketForm, overloadOpenForm, gateForm, sealForm,
       blForm, lineageForm, customsForm, craneForm,
       adjudicableTickets, releasableTickets, sealableTickets,
+      selectedLane, selectedLaneBlocked,
       login, logout, refresh,
       fmtT, ticketClass, shortText,
       createBridge, loadBridgeDetail, createLane, createTicket, loadTicketDetail, selectTicket,

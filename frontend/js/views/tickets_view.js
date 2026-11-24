@@ -1,11 +1,13 @@
 export const ticketsViewTemplate = `
 <section class="panel">
   <h2>过磅票采集</h2>
-  <p class="hint">录入各轴重 JSON；超重自动旁路挂起并开超重记录。</p>
+  <p class="hint">录入各轴重 JSON；停用车道一律禁磅（正式票零增，对账零累计），超重自动旁路挂起。</p>
   <div class="form-row">
     <div><label>车道</label>
       <select v-model.number="ticketForm.lane_id">
-        <option v-for="l in lanes" :key="l.id" :value="l.id">{{ l.lane_code }}</option>
+        <option v-for="l in lanes" :key="l.id" :value="l.id" :disabled="!l.weighable">
+          {{ l.lane_code }}{{ l.weighable ? '' : '（停用禁磅）' }}
+        </option>
       </select>
     </div>
     <div><label>提单号</label>
@@ -16,10 +18,11 @@ export const ticketsViewTemplate = `
     <div><label>车牌</label><input v-model="ticketForm.vehicle_plate"/></div>
     <div><label>票号(可空)</label><input v-model="ticketForm.ticket_code"/></div>
   </div>
+  <p v-if="selectedLaneBlocked" class="action-err">停用禁磅：{{ selectedLaneBlocked }}</p>
   <label>轴重 JSON</label>
   <textarea v-model="ticketForm.axles_json" rows="4" placeholder='[{"axle":1,"w":8.2}]'></textarea>
   <div class="actions">
-    <button @click="createTicket">过磅入闸</button>
+    <button :disabled="selectedLaneBlocked" @click="createTicket">过磅入闸</button>
     <button class="secondary" @click="refresh">刷新</button>
   </div>
   <table class="data-table">

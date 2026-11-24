@@ -21,6 +21,7 @@ export function createApi(getToken, onUnauthorized) {
     createBridge: (d) => req("/api/bridges", { method: "POST", body: JSON.stringify(d) }),
     lanes: (bridgeId) => req(bridgeId ? `/api/lanes?bridge_id=${bridgeId}` : "/api/lanes"),
     lane: (id) => req(`/api/lanes/${id}`),
+    disabledLedger: (day) => req(day ? `/api/lanes/disabled-ledger?day=${encodeURIComponent(day)}` : "/api/lanes/disabled-ledger"),
     createLane: (d) => req("/api/lanes", { method: "POST", body: JSON.stringify(d) }),
     tickets: (st) => req(st ? `/api/tickets?status=${encodeURIComponent(st)}` : "/api/tickets"),
     ticket: (id) => req(`/api/tickets/${id}`),

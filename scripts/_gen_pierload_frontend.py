@@ -217,7 +217,7 @@ DASH = r"""
 export const dashboardViewTemplate = `
 <section class="panel">
   <h2>闸口总览</h2>
-  <p class="hint">过磅票入闸后裁定超重才放行，驳回进旁路挂起；闸代快照须与提单册对账。</p>
+  <p class="hint">过磅票入闸后裁定超重才放行，驳回进旁路挂起；停用车道当日锁死，正式票与对账流量均零增。</p>
   <div class="hero-cards">
     <div class="hero-card"><span class="t">地磅桥</span><div class="n">{{ dash.bridges ?? '—' }}</div></div>
     <div class="hero-card"><span class="t">开放超重</span><div class="n">{{ dash.open_overloads ?? '—' }}</div></div>
@@ -225,7 +225,24 @@ export const dashboardViewTemplate = `
     <div class="hero-card"><span class="t">过磅票</span><div class="n">{{ dash.tickets ?? '—' }}</div></div>
     <div class="hero-card"><span class="t">已放行</span><div class="n">{{ dash.gate_releases ?? '—' }}</div></div>
     <div class="hero-card"><span class="t">已封闸</span><div class="n">{{ dash.gate_seals ?? '—' }}</div></div>
+    <div class="hero-card"><span class="t">停用车道</span><div class="n">{{ dash.closed_lanes ?? '—' }}</div></div>
+    <div class="hero-card"><span class="t">今日停用锁死</span><div class="n">{{ dash.disabled_locks_today ?? '—' }}</div></div>
   </div>
+  <p class="hint" style="margin-top:16px">停用命运册：停用车道被拒过磅即当日锁死，正式票增量 0、对账流量增量 0。</p>
+  <table v-if="disabledLedger.length" class="data-table">
+    <thead><tr><th>日期</th><th>车道</th><th>状态</th><th>操作人</th><th>正式票增量</th><th>对账流量增量</th><th>裁定</th></tr></thead>
+    <tbody>
+      <tr v-for="row in disabledLedger" :key="row.id">
+        <td>{{ row.ledger_day }}</td>
+        <td>{{ row.lane_code }}</td>
+        <td>{{ row.lane_status }}</td>
+        <td>{{ row.actor }}</td>
+        <td>{{ row.formal_ticket_delta }}</td>
+        <td>{{ row.reconcile_traffic_delta }}</td>
+        <td><span class="badge fail">{{ row.verdict }}</span></td>
+      </tr>
+    </tbody>
+  </table>
   <p class="hint" style="margin-top:16px">骨架：{{ dash.meta && dash.meta.skeleton }}</p>
 </section>
 `;"""
@@ -262,7 +279,18 @@ export const bridgesViewTemplate = `
   </table>
   <div v-if="bridgeDetail" class="detail-box">
     <h3>{{ bridgeDetail.bridge.name }} · {{ bridgeDetail.bridge.bridge_code }}</h3>
-    <p>在港票 {{ bridgeDetail.active_tickets }} · 车道 {{ bridgeDetail.lanes.length }} 条</p>
+    <p>在港票 {{ bridgeDetail.active_tickets }} · 车道 {{ bridgeDetail.lanes.length }} 条 · 停用 {{ bridgeDetail.closed_lanes }} 条</p>
+    <table class="data-table">
+      <thead><tr><th>车道</th><th>方向</th><th>状态</th><th>过磅</th></tr></thead>
+      <tbody>
+        <tr v-for="l in bridgeDetail.lanes" :key="l.id">
+          <td>{{ l.lane_code }}</td>
+          <td>{{ l.direction }}</td>
+          <td>{{ l.status }}</td>
+          <td><span class="badge" :class="l.weighable ? 'pass' : 'fail'">{{ l.weighable ? '可过磅' : '停用禁磅' }}</span></td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 </section>
 `;"""
@@ -271,11 +299,13 @@ TICKETS = r"""
 export const ticketsViewTemplate = `
 <section class="panel">
   <h2>过磅票采集</h2>
-  <p class="hint">录入各轴重 JSON；超重自动旁路挂起并开超重记录。</p>
+  <p class="hint">录入各轴重 JSON；停用车道一律禁磅（正式票零增，对账零累计），超重自动旁路挂起。</p>
   <div class="form-row">
     <div><label>车道</label>
       <select v-model.number="ticketForm.lane_id">
-        <option v-for="l in lanes" :key="l.id" :value="l.id">{{ l.lane_code }}</option>
+        <option v-for="l in lanes" :key="l.id" :value="l.id" :disabled="!l.weighable">
+          {{ l.lane_code }}{{ l.weighable ? '' : '（停用禁磅）' }}
+        </option>
       </select>
     </div>
     <div><label>提单号</label>
@@ -286,10 +316,11 @@ export const ticketsViewTemplate = `
     <div><label>车牌</label><input v-model="ticketForm.vehicle_plate"/></div>
     <div><label>票号(可空)</label><input v-model="ticketForm.ticket_code"/></div>
   </div>
+  <p v-if="selectedLaneBlocked" class="action-err">停用禁磅：{{ selectedLaneBlocked }}</p>
   <label>轴重 JSON</label>
   <textarea v-model="ticketForm.axles_json" rows="4" placeholder='[{"axle":1,"w":8.2}]'></textarea>
   <div class="actions">
-    <button @click="createTicket">过磅入闸</button>
+    <button :disabled="selectedLaneBlocked" @click="createTicket">过磅入闸</button>
     <button class="secondary" @click="refresh">刷新</button>
   </div>
   <table class="data-table">
@@ -496,6 +527,11 @@ export const reconcileViewTemplate = `
       <p>申报 {{ reconOne.declared_gross_t }}t · 过磅合计 {{ reconOne.ticket_sum_t }}t</p>
       <p :class="reconOne.balanced ? 'ok' : 'bad'">{{ reconOne.balanced ? '账实平衡' : '偏差待查' }}</p>
       <p>快照数 {{ reconOne.seal_count }} · 可出证明 {{ reconOne.proof_ready ? '是' : '否' }}</p>
+      <p>计入票 {{ reconOne.counted_tickets }} · 停用剔除 {{ reconOne.skipped_disabled.length }}</p>
+      <p v-for="s in reconOne.skipped_disabled" :key="s.ticket_code" class="action-err">
+        {{ s.ticket_code }} 在停用车道 {{ s.lane_code }}（{{ s.lane_status }}），不计入对账流量
+      </p>
+      <p v-if="reconOne.disabled_locks.length">今日停用命运册锁死 {{ reconOne.disabled_locks.length }} 条</p>
     </div>
     <ul v-if="reconAllItems.length">
       <li v-for="r in reconAllItems" :key="r.bl_code">{{ r.bl_code }} · {{ r.balanced ? '平' : '偏' }}</li>
@@ -504,7 +540,7 @@ export const reconcileViewTemplate = `
   <section class="panel">
     <h2>单票证明</h2>
     <div class="form-row"><div><label>票号</label><input v-model="proofCode"/></div></div>
-    <motion class="actions"><button @click="loadProof">拉证明</button></motion>
+    <div class="actions"><button @click="loadProof">拉证明</button></div>
     <div v-if="proofOne" class="detail-box">
       <p>提单匹配 {{ proofOne.manifest_matches_bl ? '是' : '否' }}</p>
       <p>超重闭环 {{ proofOne.overload_closed ? '是' : '否' }}</p>
@@ -568,6 +604,7 @@ export function createApi(getToken, onUnauthorized) {
     createBridge: (d) => req("/api/bridges", { method: "POST", body: JSON.stringify(d) }),
     lanes: (bridgeId) => req(bridgeId ? `/api/lanes?bridge_id=${bridgeId}` : "/api/lanes"),
     lane: (id) => req(`/api/lanes/${id}`),
+    disabledLedger: (day) => req(day ? `/api/lanes/disabled-ledger?day=${encodeURIComponent(day)}` : "/api/lanes/disabled-ledger"),
     createLane: (d) => req("/api/lanes", { method: "POST", body: JSON.stringify(d) }),
     tickets: (st) => req(st ? `/api/tickets?status=${encodeURIComponent(st)}` : "/api/tickets"),
     ticket: (id) => req(`/api/tickets/${id}`),
@@ -648,7 +685,7 @@ createApp({
     });
     const laneForm = ref({
       lane_code: "LN-NEW-IN", bridge_id: 1, direction: "进闸",
-      overload_threshold_t: 40, side_lane_ref: "旁路丁",
+      overload_threshold_t: 40, side_lane_ref: "旁路丁", status: "开放",
     });
     const ticketForm = ref({
       lane_id: 1, bl_ref: "BL-2026-0101", vehicle_plate: "沪A·试0001",
@@ -928,7 +965,7 @@ LANES = r"""
 export const lanesViewTemplate = `
 <section class="panel">
   <h2>过磅车道</h2>
-  <p class="hint">每车道配置超限阈值与旁路引用；进闸方向与出闸方向分开编码。</p>
+  <p class="hint">每车道配置超限阈值与旁路引用；停用车道一律禁止过磅，正式票零增。</p>
   <div class="form-row">
     <div><label>车道编码</label><input v-model="laneForm.lane_code"/></div>
     <div><label>所属地磅</label>
@@ -939,13 +976,19 @@ export const lanesViewTemplate = `
     <div><label>方向</label><input v-model="laneForm.direction" placeholder="进闸/出闸"/></div>
     <div><label>超限阈值(吨)</label><input v-model.number="laneForm.overload_threshold_t" type="number"/></div>
     <div><label>旁路</label><input v-model="laneForm.side_lane_ref"/></div>
+    <div><label>状态</label>
+      <select v-model="laneForm.status">
+        <option value="开放">开放</option>
+        <option value="停用">停用</option>
+      </select>
+    </div>
   </div>
   <div class="actions">
     <button @click="createLane">开通车道</button>
     <button class="secondary" @click="refresh">刷新</button>
   </div>
   <table class="data-table">
-    <thead><tr><th>车道</th><th>地磅</th><th>方向</th><th>阈值</th><th>旁路</th><th>状态</th></tr></thead>
+    <thead><tr><th>车道</th><th>地磅</th><th>方向</th><th>阈值</th><th>旁路</th><th>状态</th><th>过磅</th></tr></thead>
     <tbody>
       <tr v-for="l in lanes" :key="l.id">
         <td>{{ l.lane_code }}</td>
@@ -953,7 +996,13 @@ export const lanesViewTemplate = `
         <td>{{ l.direction }}</td>
         <td>{{ l.overload_threshold_t }}t</td>
         <td>{{ l.side_lane_ref || '—' }}</td>
-        <td><span class="badge pass">{{ l.status }}</span></td>
+        <td><span class="badge" :class="l.weighable ? 'pass' : 'fail'">{{ l.status }}</span></td>
+        <td>
+          <span class="badge" :class="l.weighable ? 'pass' : 'fail'">
+            {{ l.weighable ? '可过磅' : '停用禁磅' }}
+          </span>
+          <span v-if="!l.weighable" class="blocked-note">{{ l.blocked_reason }}</span>
+        </td>
       </tr>
     </tbody>
   </table>

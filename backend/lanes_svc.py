@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
+from lane_ledger import lane_locked_today, ledger_for_day
+from lane_state import annotate_lane
 from models import LaneIn
 
 router = APIRouter(tags=["lanes"])
@@ -27,7 +29,14 @@ def list_lanes(authorization: AuthHeader = None, bridge_id: int | None = None):
                    JOIN weigh_bridges b ON b.id=l.bridge_id
                    ORDER BY l.lane_code"""
             ).fetchall()
-        return {"items": [dict(r) for r in rows]}
+        return {"items": [annotate_lane(r) for r in rows]}
+
+
+@router.get("/api/lanes/disabled-ledger")
+def disabled_ledger(day: str | None = None, authorization: AuthHeader = None):
+    require_user(authorization)
+    with connect() as conn:
+        return {"day": day or now_iso()[:10], "items": ledger_for_day(conn, day)}
 
 
 @router.get("/api/lanes/{lane_id}")
@@ -42,12 +51,17 @@ def get_lane(lane_id: int, authorization: AuthHeader = None):
         ).fetchone()
         if not row:
             raise HTTPException(404, "车道不存在")
+        lane = annotate_lane(row)
         tickets = conn.execute(
             """SELECT ticket_code, status, gross_t FROM weigh_tickets
                WHERE lane_id=? ORDER BY id DESC LIMIT 8""",
             (lane_id,),
         ).fetchall()
-        return {"lane": dict(row), "recent_tickets": [dict(t) for t in tickets]}
+        return {
+            "lane": lane,
+            "recent_tickets": [dict(t) for t in tickets],
+            "disabled_locked_today": lane_locked_today(conn, lane_id),
+        }
 
 
 @router.post("/api/lanes")

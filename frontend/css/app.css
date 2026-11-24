@@ -129,6 +129,7 @@ textarea { min-height: 80px; font-family: var(--font-mono); font-size: 12px; }
 .badge.fail { border-color: var(--bad); color: var(--bad); }
 .badge.warn { border-color: var(--warn); color: var(--warn); }
 .badge.muted { color: var(--text-dim); }
+.blocked-note { display: block; margin-top: 4px; font-size: 11px; color: var(--bad); }
 .detail-box {
   margin-top: 14px; padding: 12px; background: var(--bg-slate);
   border: 1px dashed var(--line); border-radius: 6px; font-size: 13px;

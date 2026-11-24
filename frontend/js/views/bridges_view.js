@@ -29,7 +29,18 @@ export const bridgesViewTemplate = `
   </table>
   <div v-if="bridgeDetail" class="detail-box">
     <h3>{{ bridgeDetail.bridge.name }} · {{ bridgeDetail.bridge.bridge_code }}</h3>
-    <p>在港票 {{ bridgeDetail.active_tickets }} · 车道 {{ bridgeDetail.lanes.length }} 条</p>
+    <p>在港票 {{ bridgeDetail.active_tickets }} · 车道 {{ bridgeDetail.lanes.length }} 条 · 停用 {{ bridgeDetail.closed_lanes }} 条</p>
+    <table class="data-table">
+      <thead><tr><th>车道</th><th>方向</th><th>状态</th><th>过磅</th></tr></thead>
+      <tbody>
+        <tr v-for="l in bridgeDetail.lanes" :key="l.id">
+          <td>{{ l.lane_code }}</td>
+          <td>{{ l.direction }}</td>
+          <td>{{ l.status }}</td>
+          <td><span class="badge" :class="l.weighable ? 'pass' : 'fail'">{{ l.weighable ? '可过磅' : '停用禁磅' }}</span></td>
+        </tr>
+      </tbody>
+    </table>
   </div>
 </section>
 `;

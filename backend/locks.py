@@ -17,22 +17,26 @@ class LockIn(BaseModel):
 
 def try_acquire(conn, lock_key: str, holder: str) -> bool:
     now = now_iso()
+    # 抢锁必须落盘提交，否则另一会话看不到持锁，双会话可同时建票。
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO pier_locks(lock_key,holder,acquired_at) VALUES (?,?,?)",
+        (lock_key, holder, now),
+    )
+    if cur.rowcount == 1:
+        conn.commit()
+        return True
     row = conn.execute(
         "SELECT holder FROM pier_locks WHERE lock_key=?", (lock_key,)
     ).fetchone()
-    if row is None:
-        conn.execute(
-            "INSERT INTO pier_locks(lock_key,holder,acquired_at) VALUES (?,?,?)",
-            (lock_key, holder, now),
-        )
-        return True
-    if row["holder"] == holder:
+    if row is not None and row["holder"] == holder:
+        conn.commit()
         return True
     conn.execute(
         """INSERT INTO contention_log(lock_key,actor,action,detail,created_at)
            VALUES (?,?,?,?,?)""",
-        (lock_key, holder, "争用", f"持有者={row['holder']}", now),
+        (lock_key, holder, "争用", f"持有者={row['holder'] if row else '未知'}", now),
     )
+    conn.commit()
     return False
 
 
@@ -41,6 +45,7 @@ def release(conn, lock_key: str, holder: str) -> None:
         "DELETE FROM pier_locks WHERE lock_key=? AND holder=?",
         (lock_key, holder),
     )
+    conn.commit()
 
 
 def require_lock(conn, lock_key: str, holder: str) -> None:

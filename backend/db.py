@@ -156,6 +156,20 @@ CREATE TABLE IF NOT EXISTS contention_log(
   detail TEXT,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS lane_disable_ledger(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ledger_day TEXT NOT NULL,
+  lane_id INTEGER NOT NULL,
+  lane_code TEXT NOT NULL,
+  lane_status TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  requested_ticket_code TEXT,
+  formal_ticket_delta INTEGER NOT NULL,
+  reconcile_traffic_delta INTEGER NOT NULL,
+  verdict TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(ledger_day, lane_id)
+);
 CREATE TABLE IF NOT EXISTS audit_trail(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   actor TEXT NOT NULL,
@@ -452,8 +466,12 @@ def init_db() -> None:
 
 
 def dashboard_stats(conn: sqlite3.Connection) -> dict:
+    from lane_state import lane_is_open
+
     bridges = conn.execute("SELECT COUNT(*) c FROM weigh_bridges").fetchone()["c"]
     lanes = conn.execute("SELECT COUNT(*) c FROM weigh_lanes").fetchone()["c"]
+    lane_rows = conn.execute("SELECT status FROM weigh_lanes").fetchall()
+    closed_lanes = sum(1 for r in lane_rows if not lane_is_open(r["status"]))
     tickets = conn.execute("SELECT COUNT(*) c FROM weigh_tickets").fetchone()["c"]
     open_holds = conn.execute(
         "SELECT COUNT(*) c FROM overload_holds WHERE status='开放'"
@@ -477,15 +495,22 @@ def dashboard_stats(conn: sqlite3.Connection) -> dict:
         """SELECT COUNT(*) c FROM weigh_tickets
            WHERE status='旁路挂起'"""
     ).fetchone()["c"]
+    today = now_iso()[:10]
+    disabled_locks_today = conn.execute(
+        "SELECT COUNT(*) c FROM lane_disable_ledger WHERE ledger_day=?",
+        (today,),
+    ).fetchone()["c"]
     return {
         "bridges": bridges,
         "lanes": lanes,
+        "closed_lanes": closed_lanes,
         "tickets": tickets,
         "open_overloads": open_holds,
         "gate_releases": released,
         "gate_seals": sealed,
         "bl_manifests": bl_count,
         "side_pending": pending,
+        "disabled_locks_today": disabled_locks_today,
         "stubs": stubs,
         "meta": PRODUCT_META,
     }

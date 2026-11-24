@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user, require_writer
 from db import connect, now_iso, write_audit
+from lane_ledger import VERDICT_DEVIATION, lane_locked_today, record_disabled_weigh_rejection
+from lane_state import lane_is_open
 from locks import release, require_lock
 from models import TicketIn
 from validators import (
@@ -102,7 +104,28 @@ def create_ticket(body: TicketIn, authorization: AuthHeader = None):
             ).fetchone()
             if not lane:
                 raise HTTPException(404, "车道不存在")
-            validate_lane_open(dict(lane))
+            lane_dict = dict(lane)
+            if not lane_is_open(lane_dict.get("status")):
+                # 停用禁磅：正式票零增、对账零累计，只留当日命运册锁死痕。
+                record_disabled_weigh_rejection(
+                    conn,
+                    lane=lane_dict,
+                    lane_id=body.lane_id,
+                    actor=user,
+                    ticket_code=body.ticket_code,
+                )
+                validate_lane_open(lane_dict)
+            if lane_locked_today(conn, body.lane_id):
+                # 当日命运册已锁死：即便车道状态被改回开放，也不得绕开禁磅。
+                record_disabled_weigh_rejection(
+                    conn,
+                    lane=lane_dict,
+                    lane_id=body.lane_id,
+                    actor=user,
+                    ticket_code=body.ticket_code,
+                    reason=VERDICT_DEVIATION,
+                )
+                raise HTTPException(409, "停用命运册当日锁死：禁止绕行过磅")
             axles = [a.model_dump() for a in body.axle_weights]
             validate_axle_count(axles, int(lane["axle_limit"]))
             gross, _peak, _spread = validate_axle_weights(axles)

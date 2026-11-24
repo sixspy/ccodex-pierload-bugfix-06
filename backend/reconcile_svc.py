@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from auth import AuthHeader, require_user
+from lane_ledger import ledger_for_day, locked_lane_since
 from validators import validate_bl_match
 
 router = APIRouter(tags=["reconcile"])
@@ -43,8 +44,11 @@ def _reconcile_bl(conn, bl_code: str) -> dict:
         "SELECT * FROM bl_manifests WHERE bl_code=?", (bl_code,)
     ).fetchone()
     tickets = conn.execute(
-        """SELECT ticket_code, gross_t, status, generation FROM weigh_tickets
-           WHERE bl_ref=? AND status NOT IN ('作废')""",
+        """SELECT t.ticket_code, t.gross_t, t.status, t.generation, t.lane_id,
+                  t.created_at, l.lane_code, l.status lane_status
+           FROM weigh_tickets t
+           JOIN weigh_lanes l ON l.id=t.lane_id
+           WHERE t.bl_ref=? AND t.status NOT IN ('作废')""",
         (bl_code,),
     ).fetchall()
     if not tickets:
@@ -55,8 +59,33 @@ def _reconcile_bl(conn, bl_code: str) -> dict:
             "balanced": False,
             "reason": "无过磅票",
             "tickets": [],
+            "counted_tickets": 0,
+            "skipped_disabled": [],
+            "disabled_locks": ledger_for_day(conn),
         }
-    ticket_sum = round(sum(float(t["gross_t"]) for t in tickets), 3)
+    locked = locked_lane_since(conn)
+
+    def _counts(t) -> bool:
+        # 对账只认既成事实：停用车道在锁死时刻之前的过磅仍计入历史流量，
+        # 锁死时刻之后一律剔除（正常路径已拒写，此处兜底防旁门）。
+        since = locked.get(int(t["lane_id"]))
+        if since:
+            return str(t["created_at"] or "") < since
+        return True
+
+    counted = [t for t in tickets if _counts(t)]
+    skipped = []
+    for t in tickets:
+        if _counts(t):
+            continue
+        since = locked.get(int(t["lane_id"]))
+        reason = "停用车道当日锁死后剔除" if since else "停用车道剔除"
+        skipped.append(
+            {"ticket_code": t["ticket_code"], "lane_code": t["lane_code"],
+             "lane_status": t["lane_status"], "reason": reason}
+        )
+    # 停用车道当日锁死：不计入对账流量，正式口径零累计。
+    ticket_sum = round(sum(float(t["gross_t"]) for t in counted), 3)
     declared = float(bl["declared_gross_t"])
     matched = validate_bl_match(declared, ticket_sum, tolerance=0.1)
     seal_rows = conn.execute(
@@ -73,7 +102,10 @@ def _reconcile_bl(conn, bl_code: str) -> dict:
         "balanced": matched,
         "proof_ready": proof_ok,
         "seal_count": len(seal_rows),
-        "tickets": [dict(t) for t in tickets],
+        "counted_tickets": len(counted),
+        "skipped_disabled": skipped,
+        "disabled_locks": ledger_for_day(conn),
+        "tickets": [dict(t) for t in counted],
         "seals": [dict(s) for s in seal_rows],
     }
 
